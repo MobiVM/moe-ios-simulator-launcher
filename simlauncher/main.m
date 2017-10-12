@@ -105,17 +105,33 @@ NSFileHandle *moe_mkfifo(NSString *path, FILE *outFile) {
 
     int fd = open(path.UTF8String, O_RDONLY | O_NDELAY);
     moe_runtime_check(fd != -1, @"Failed to mkfifo at %@", path);
-
-    NSFileHandle *fh = [[NSFileHandle alloc] initWithFileDescriptor:fd];
-    [fh setReadabilityHandler:^(NSFileHandle * _Nonnull file) {
-        NSData *data = [file availableData];
-        if (!data) return;
-        NSString *msg = [[NSString alloc] initWithData:data
-                                              encoding:NSUTF8StringEncoding];
-        fprintf(outFile, "%s", msg.UTF8String);
-        fflush(outFile);
+    
+    NSThread *t = [[NSThread alloc] initWithBlock:^{
+        fd_set readset;
+        char buff[1024];
+        for(;;) {
+            FD_ZERO(&readset);
+            FD_SET(fd, &readset);
+            int err = select(fd+1, &readset, NULL, NULL, NULL);
+            if (err > 0 && FD_ISSET(fd, &readset)) {
+                FD_CLR(fd, &readset);
+                for (;;) {
+                    long bytes = read(fd, &buff, sizeof(buff));
+                    if (bytes <= 0)
+                        break;
+                    NSData *data = [NSData dataWithBytes:buff length:bytes];
+                    NSString *msg = [[NSString alloc] initWithData:data
+                                                          encoding:NSUTF8StringEncoding];
+                    fprintf(outFile, "%s", msg.UTF8String);
+                    fflush(outFile);
+                }
+            }
+        }
     }];
-    return fh;
+    [t start];
+    
+    // TODO: returning null
+    return NULL;
 }
 
 void moe_main(Config *config) {
